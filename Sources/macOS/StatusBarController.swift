@@ -12,18 +12,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     private var doneRevertTimer: Timer?
     private var hotkeyManager: HotkeyManager?
     private var currentState: MenuBarIconState = .idle
-
-    // Spinner frames using Unicode braille-style rotation (8 positions)
-    private static let spinnerSymbols = [
-        "arrow.clockwise",
-        "arrow.clockwise",
-        "arrow.clockwise",
-        "arrow.clockwise",
-        "arrow.clockwise",
-        "arrow.clockwise",
-        "arrow.clockwise",
-        "arrow.clockwise",
-    ]
+    private var settingsWindowController: SettingsWindowController?
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -161,8 +150,8 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
     @objc private func openSettings() {
         print("[BrainDump] Settings tapped (stub)")
-        let windowController = SettingsWindowController()
-        windowController.showWindow(nil)
+        settingsWindowController = SettingsWindowController()
+        settingsWindowController?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -205,11 +194,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     private func handleSubmit(_ text: String) {
         closePopover()
         setState(.processing)
-        Task {
+        Task { [weak self] in
             await SubmissionQueue.shared.submit(text)
-            await MainActor.run {
-                self.setState(.done)
-            }
+            self?.setState(.done)
         }
     }
 
@@ -263,7 +250,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size, flipped: false) { rect in
             guard let baseImage = self.sfSymbol("arrow.2.circlepath") else { return false }
-            let ctx = NSGraphicsContext.current!.cgContext
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
             ctx.translateBy(x: rect.midX, y: rect.midY)
             ctx.rotate(by: angle)
             ctx.translateBy(x: -rect.midX, y: -rect.midY)

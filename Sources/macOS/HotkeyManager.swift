@@ -6,6 +6,7 @@ final class HotkeyManager {
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
     private let handler: () -> Void
+    private var selfPtr: UnsafeMutableRawPointer?
 
     // Unique ID for our hotkey event
     private static let hotkeyID = EventHotKeyID(signature: OSType(0x4244_5554), id: 1) // 'BDUT'
@@ -25,7 +26,7 @@ final class HotkeyManager {
         // Install application event handler
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
 
-        let selfPtr = Unmanaged.passRetained(self).toOpaque()
+        selfPtr = Unmanaged.passRetained(self).toOpaque()
 
         let status = InstallEventHandler(
             GetApplicationEventTarget(),
@@ -59,7 +60,10 @@ final class HotkeyManager {
 
         guard status == noErr else {
             print("[BrainDump] Failed to install hotkey event handler: \(status)")
-            Unmanaged<HotkeyManager>.fromOpaque(selfPtr).release()
+            if let ptr = selfPtr {
+                Unmanaged<HotkeyManager>.fromOpaque(ptr).release()
+                selfPtr = nil
+            }
             return
         }
 
@@ -86,6 +90,10 @@ final class HotkeyManager {
         if let ref = eventHandlerRef {
             RemoveEventHandler(ref)
             eventHandlerRef = nil
+        }
+        if let ptr = selfPtr {
+            Unmanaged<HotkeyManager>.fromOpaque(ptr).release()
+            selfPtr = nil
         }
     }
 }

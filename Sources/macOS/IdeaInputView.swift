@@ -25,10 +25,6 @@ struct IdeaInputView: View {
                         .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
                 )
                 .focused($editorFocused)
-                .onKeyPress(.escape) {
-                    onDiscard()
-                    return .handled
-                }
 
             HStack {
                 Spacer()
