@@ -58,7 +58,7 @@ public struct AnthropicProvider: LLMProvider {
                 // Anthropic requires tool_result blocks in a user-role message.
                 // If the last conversation message is already a user-role tool_result
                 // accumulator, append to it; otherwise create a new user message.
-                if var last = conversationMessages.last, last.role == "user",
+                if let last = conversationMessages.last, last.role == "user",
                    case .blocks(let existing) = last.content {
                     let updated = existing + [block]
                     conversationMessages[conversationMessages.count - 1] = AnthropicMessage(

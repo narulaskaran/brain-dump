@@ -27,12 +27,18 @@ public struct OpenAIProvider: LLMProvider {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let openAIMessages: [OpenAIMessage] = messages.compactMap { message in
+        let openAIMessages: [OpenAIMessage] = messages.map { message in
             switch message.content {
             case .text(let s):
-                return OpenAIMessage(role: message.role.rawValue, content: .string(s))
+                return OpenAIMessage(
+                    role: message.role.rawValue,
+                    content: s,
+                    toolCalls: nil,
+                    toolCallId: nil
+                )
             case .toolUse(let calls):
-                let blocks: [OpenAIContentBlock] = calls.map { call in
+                // OpenAI: assistant message with tool_calls field, content is null
+                let toolCallPayloads = calls.map { call -> OpenAIOutboundToolCall in
                     let argsString: String
                     if let data = try? JSONEncoder().encode(call.input),
                        let str = String(data: data, encoding: .utf8) {
@@ -40,13 +46,22 @@ public struct OpenAIProvider: LLMProvider {
                     } else {
                         argsString = "{}"
                     }
-                    return OpenAIContentBlock.toolCall(OpenAIOutboundToolCall(
-                        id: call.id, name: call.name, arguments: argsString
-                    ))
+                    return OpenAIOutboundToolCall(id: call.id, name: call.name, arguments: argsString)
                 }
-                return OpenAIMessage(role: message.role.rawValue, content: .blocks(blocks))
+                return OpenAIMessage(
+                    role: "assistant",
+                    content: nil,
+                    toolCalls: toolCallPayloads,
+                    toolCallId: nil
+                )
             case .toolResult(let toolUseId, let result):
-                return OpenAIMessage(role: "tool", content: .string(result), toolCallId: toolUseId)
+                // OpenAI: role "tool" with tool_call_id
+                return OpenAIMessage(
+                    role: "tool",
+                    content: result,
+                    toolCalls: nil,
+                    toolCallId: toolUseId
+                )
             }
         }
 
@@ -145,17 +160,7 @@ private struct OpenAIRequestBody: Encodable {
     }
 }
 
-private enum OpenAIContentBlock: Encodable {
-    case toolCall(OpenAIOutboundToolCall)
-
-    func encode(to encoder: Encoder) throws {
-        switch self {
-        case .toolCall(let tc):
-            try tc.encode(to: encoder)
-        }
-    }
-}
-
+/// An outbound tool call in the assistant message (not the response model).
 private struct OpenAIOutboundToolCall: Encodable {
     let id: String
     let name: String
@@ -171,43 +176,27 @@ private struct OpenAIOutboundToolCall: Encodable {
     }
 }
 
-private enum OpenAIMessageContent: Encodable {
-    case string(String)
-    case blocks([OpenAIContentBlock])
-
-    func encode(to encoder: Encoder) throws {
-        switch self {
-        case .string(let s):
-            var c = encoder.singleValueContainer()
-            try c.encode(s)
-        case .blocks(let blocks):
-            var c = encoder.singleValueContainer()
-            try c.encode(blocks)
-        }
-    }
-}
-
 private struct OpenAIMessage: Encodable {
     let role: String
-    let content: OpenAIMessageContent
+    let content: String?
+    let toolCalls: [OpenAIOutboundToolCall]?
     let toolCallId: String?
-
-    init(role: String, content: OpenAIMessageContent, toolCallId: String? = nil) {
-        self.role = role
-        self.content = content
-        self.toolCallId = toolCallId
-    }
 
     enum CodingKeys: String, CodingKey {
         case role, content
+        case toolCalls = "tool_calls"
         case toolCallId = "tool_call_id"
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(role, forKey: .role)
-        try c.encode(content, forKey: .content)
-        if let toolCallId = toolCallId {
+        // Always include content key (null for assistant tool-call messages)
+        try c.encodeIfPresent(content, forKey: .content)
+        if let toolCalls {
+            try c.encode(toolCalls, forKey: .toolCalls)
+        }
+        if let toolCallId {
             try c.encode(toolCallId, forKey: .toolCallId)
         }
     }
