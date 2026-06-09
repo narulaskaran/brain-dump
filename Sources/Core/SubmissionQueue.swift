@@ -82,6 +82,7 @@ public actor SubmissionQueue {
     public func runGrooming() async {
         guard let groomer = groomingAgent else {
             print("[BrainDump] Groom requested but no GroomingAgent configured")
+            await notifyStateChange(.error("Not configured — check Settings"))
             return
         }
 

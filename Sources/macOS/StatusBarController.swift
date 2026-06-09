@@ -44,7 +44,31 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             }
         }
 
+        // Bootstrap the filing + grooming pipeline with current config
+        configureSubmissionQueue()
+
         setState(.idle)
+    }
+
+    // MARK: - Pipeline Bootstrap
+
+    private func configureSubmissionQueue() {
+        Task {
+            let config = ProviderConfig.load() ?? .defaultAnthropic
+            let provider = makeLLMProvider(config: config)
+            let vaultURL = VaultPathManager.effectiveVaultURL()
+            let embeddingEngine = EmbeddingEngine()
+            let vaultIndex = VaultIndex(vaultPath: vaultURL, embeddingEngine: embeddingEngine)
+            let vaultTools = VaultTools(vaultPath: vaultURL, vaultIndex: vaultIndex)
+            let filingAgent = FilingAgent(provider: provider, vaultTools: vaultTools, vaultPath: vaultURL)
+            let groomingAgent = GroomingAgent(provider: provider, vaultIndex: vaultIndex, vaultPath: vaultURL)
+            await SubmissionQueue.shared.configure(
+                filingAgent: filingAgent,
+                groomingAgent: groomingAgent,
+                vaultIndex: vaultIndex
+            )
+            print("[BrainDump] Pipeline configured — \(config.provider) / \(config.model)")
+        }
     }
 
     // MARK: - Configuration
@@ -197,16 +221,17 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     }
 
     @objc private func groomBacklog() {
-        setState(.processing)
         Task {
             await SubmissionQueue.shared.runGrooming()
-            // Final state (.done / .error) delivered via onStateChange callback.
+            // State (.processing → .done / .error) managed entirely by runGrooming().
         }
     }
 
     @objc private func openSettings() {
         if settingsWindowController == nil {
-            settingsWindowController = SettingsWindowController()
+            settingsWindowController = SettingsWindowController(onSave: { [weak self] in
+                self?.reloadConfig()
+            })
         }
         settingsWindowController?.showWindow(nil)
     }
@@ -216,11 +241,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         openSettings()
     }
 
-    /// Re-read ProviderConfig and vault URL after settings are saved.
+    /// Re-read ProviderConfig and vault URL after settings are saved, then rebuild pipeline.
     func reloadConfig() {
-        let config = ProviderConfig.load() ?? .defaultAnthropic
-        let vaultURL = VaultPathManager.effectiveVaultURL()
-        print("[BrainDump] Config reloaded — provider: \(config.provider), model: \(config.model), vault: \(vaultURL.path)")
+        configureSubmissionQueue()
     }
 
     // MARK: - Popover Management

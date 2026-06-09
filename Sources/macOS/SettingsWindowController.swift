@@ -5,7 +5,7 @@ import Core
 /// Window controller that hosts the real SettingsView.
 final class SettingsWindowController: NSWindowController {
 
-    convenience init() {
+    convenience init(onSave: (() -> Void)? = nil) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 480, height: 520),
             styleMask: [.titled, .closable, .miniaturizable],
@@ -17,6 +17,7 @@ final class SettingsWindowController: NSWindowController {
         self.init(window: window)
 
         let settingsView = SettingsView(onDone: { [weak self] in
+            onSave?()
             self?.close()
         })
         window.contentView = NSHostingView(rootView: settingsView)
