@@ -27,8 +27,27 @@ public struct OpenAIProvider: LLMProvider {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let openAIMessages: [OpenAIMessage] = messages.map { message in
-            OpenAIMessage(role: message.role.rawValue, content: message.content)
+        let openAIMessages: [OpenAIMessage] = messages.compactMap { message in
+            switch message.content {
+            case .text(let s):
+                return OpenAIMessage(role: message.role.rawValue, content: .string(s))
+            case .toolUse(let calls):
+                let blocks: [OpenAIContentBlock] = calls.map { call in
+                    let argsString: String
+                    if let data = try? JSONEncoder().encode(call.input),
+                       let str = String(data: data, encoding: .utf8) {
+                        argsString = str
+                    } else {
+                        argsString = "{}"
+                    }
+                    return OpenAIContentBlock.toolCall(OpenAIOutboundToolCall(
+                        id: call.id, name: call.name, arguments: argsString
+                    ))
+                }
+                return OpenAIMessage(role: message.role.rawValue, content: .blocks(blocks))
+            case .toolResult(let toolUseId, let result):
+                return OpenAIMessage(role: "tool", content: .string(result), toolCallId: toolUseId)
+            }
         }
 
         let toolPayloads: [OpenAITool]? = tools.isEmpty ? nil : tools.map { tool in
@@ -126,9 +145,72 @@ private struct OpenAIRequestBody: Encodable {
     }
 }
 
+private enum OpenAIContentBlock: Encodable {
+    case toolCall(OpenAIOutboundToolCall)
+
+    func encode(to encoder: Encoder) throws {
+        switch self {
+        case .toolCall(let tc):
+            try tc.encode(to: encoder)
+        }
+    }
+}
+
+private struct OpenAIOutboundToolCall: Encodable {
+    let id: String
+    let name: String
+    let arguments: String
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: GenericCodingKeys.self)
+        try c.encode("function", forKey: .init("type"))
+        try c.encode(id, forKey: .init("id"))
+        var functionContainer = c.nestedContainer(keyedBy: GenericCodingKeys.self, forKey: .init("function"))
+        try functionContainer.encode(name, forKey: .init("name"))
+        try functionContainer.encode(arguments, forKey: .init("arguments"))
+    }
+}
+
+private enum OpenAIMessageContent: Encodable {
+    case string(String)
+    case blocks([OpenAIContentBlock])
+
+    func encode(to encoder: Encoder) throws {
+        switch self {
+        case .string(let s):
+            var c = encoder.singleValueContainer()
+            try c.encode(s)
+        case .blocks(let blocks):
+            var c = encoder.singleValueContainer()
+            try c.encode(blocks)
+        }
+    }
+}
+
 private struct OpenAIMessage: Encodable {
     let role: String
-    let content: String
+    let content: OpenAIMessageContent
+    let toolCallId: String?
+
+    init(role: String, content: OpenAIMessageContent, toolCallId: String? = nil) {
+        self.role = role
+        self.content = content
+        self.toolCallId = toolCallId
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case role, content
+        case toolCallId = "tool_call_id"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(role, forKey: .role)
+        try c.encode(content, forKey: .content)
+        if let toolCallId = toolCallId {
+            try c.encode(toolCallId, forKey: .toolCallId)
+        }
+    }
 }
 
 private struct OpenAITool: Encodable {
@@ -171,4 +253,26 @@ private struct OpenAIToolCall: Decodable {
 private struct OpenAIToolCallFunction: Decodable {
     let name: String
     let arguments: String
+}
+
+// MARK: - Generic coding key helper
+
+private struct GenericCodingKeys: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init(_ string: String) {
+        self.stringValue = string
+        self.intValue = nil
+    }
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        self.intValue = nil
+    }
+
+    init?(intValue: Int) {
+        self.intValue = intValue
+        self.stringValue = "\(intValue)"
+    }
 }

@@ -1,30 +1,30 @@
 import AppKit
 import SwiftUI
+import Core
 
-/// Placeholder settings window — real settings arrive in a future task.
+/// Window controller that hosts the real SettingsView.
 final class SettingsWindowController: NSWindowController {
+
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 520),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
         window.title = "BrainDump Settings"
         window.center()
-        window.contentView = NSHostingView(rootView: SettingsPlaceholderView())
         self.init(window: window)
-    }
-}
 
-private struct SettingsPlaceholderView: View {
-    var body: some View {
-        VStack {
-            Text("Settings")
-                .font(.title2)
-            Text("Coming soon.")
-                .foregroundStyle(.secondary)
-        }
-        .frame(width: 400, height: 300)
+        let settingsView = SettingsView(onDone: { [weak self] in
+            self?.close()
+        })
+        window.contentView = NSHostingView(rootView: settingsView)
+    }
+
+    override func showWindow(_ sender: Any?) {
+        super.showWindow(sender)
+        window?.makeKeyAndOrderFront(sender)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }

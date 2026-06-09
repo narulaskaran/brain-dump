@@ -149,10 +149,22 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     }
 
     @objc private func openSettings() {
-        print("[BrainDump] Settings tapped (stub)")
-        settingsWindowController = SettingsWindowController()
+        if settingsWindowController == nil {
+            settingsWindowController = SettingsWindowController()
+        }
         settingsWindowController?.showWindow(nil)
-        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Open the Settings window automatically (e.g. on first run).
+    func openSettingsIfNeeded() {
+        openSettings()
+    }
+
+    /// Re-read ProviderConfig and vault URL after settings are saved.
+    func reloadConfig() {
+        let config = ProviderConfig.load() ?? .defaultAnthropic
+        let vaultURL = VaultPathManager.effectiveVaultURL()
+        print("[BrainDump] Config reloaded — provider: \(config.provider), model: \(config.model), vault: \(vaultURL.path)")
     }
 
     // MARK: - Popover Management
