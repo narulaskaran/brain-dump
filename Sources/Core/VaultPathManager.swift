@@ -1,5 +1,11 @@
 import Foundation
 
+/// Errors thrown when accessing the security-scoped vault resource.
+public enum VaultAccessError: Error, Sendable {
+    /// The OS refused to grant access to the security-scoped resource.
+    case accessDenied
+}
+
 /// Manages the user-chosen vault directory, persisted as a security-scoped bookmark.
 public struct VaultPathManager {
 
@@ -48,5 +54,37 @@ public struct VaultPathManager {
         resolvedVaultURL() ?? FileManager.default
             .homeDirectoryForCurrentUser
             .appendingPathComponent("ideas", isDirectory: true)
+    }
+
+    // MARK: - Security-scoped resource access
+
+    /// Wraps `work` inside a `startAccessingSecurityScopedResource` /
+    /// `stopAccessingSecurityScopedResource` pair so that sandboxed builds can
+    /// reach the user-chosen vault directory.
+    ///
+    /// If no bookmark is stored the closure is called with the fallback
+    /// `effectiveVaultURL()` without starting a security-scoped access session
+    /// (the URL is already accessible in that case).
+    public static func withVaultAccess<T>(_ work: (URL) throws -> T) throws -> T {
+        guard let url = resolvedVaultURL() else {
+            return try work(effectiveVaultURL())
+        }
+        guard url.startAccessingSecurityScopedResource() else {
+            throw VaultAccessError.accessDenied
+        }
+        defer { url.stopAccessingSecurityScopedResource() }
+        return try work(url)
+    }
+
+    /// Async variant of `withVaultAccess(_:)`.
+    public static func withVaultAccess<T>(_ work: (URL) async throws -> T) async throws -> T {
+        guard let url = resolvedVaultURL() else {
+            return try await work(effectiveVaultURL())
+        }
+        guard url.startAccessingSecurityScopedResource() else {
+            throw VaultAccessError.accessDenied
+        }
+        defer { url.stopAccessingSecurityScopedResource() }
+        return try await work(url)
     }
 }

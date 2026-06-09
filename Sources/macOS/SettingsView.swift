@@ -21,6 +21,10 @@ struct SettingsView: View {
 
     @State private var autoGroom: Bool
 
+    // MARK: Errors
+
+    @State private var keychainError: String?
+
     // MARK: Dismissal
 
     var onDone: (() -> Void)?
@@ -64,6 +68,12 @@ struct SettingsView: View {
 
                 SecureField("API Key", text: $apiKey)
                     .textFieldStyle(.roundedBorder)
+
+                if let keychainError {
+                    Text(keychainError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
 
                 TextField("Model", text: $model)
                     .textFieldStyle(.roundedBorder)
@@ -146,7 +156,13 @@ struct SettingsView: View {
 
     private func saveAndDismiss() {
         // Persist API key to Keychain
-        try? KeychainHelper.save(key: "apiKey", value: apiKey)
+        do {
+            try KeychainHelper.save(key: "apiKey", value: apiKey)
+            keychainError = nil
+        } catch {
+            keychainError = "Could not save API key: \(error.localizedDescription)"
+            return
+        }
 
         // Build and persist ProviderConfig
         let baseURL = URL(string: baseURLString) ?? URL(string: "https://api.anthropic.com")!

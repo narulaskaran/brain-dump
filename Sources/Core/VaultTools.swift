@@ -117,11 +117,11 @@ public struct VaultTools: Sendable {
         case "search_similar":
             return await executeSearchSimilar(call.input)
         case "read_file":
-            return try executeReadFile(call.input)
+            return executeReadFile(call.input)
         case "write_file":
-            return try await executeWriteFile(call.input)
+            return await executeWriteFile(call.input)
         case "append_to_file":
-            return try executeAppendToFile(call.input)
+            return executeAppendToFile(call.input)
         case "update_index":
             return executeUpdateIndex(call.input)
         case "done":
@@ -158,92 +158,97 @@ public struct VaultTools: Sendable {
         return "[\(items.joined(separator: ","))]"
     }
 
-    private func executeReadFile(_ input: JSONValue) throws -> String {
+    private func executeReadFile(_ input: JSONValue) -> String {
         guard case .object(let obj) = input,
               case .string(let path) = obj["path"] else {
             return "Error: missing required parameter 'path'"
         }
 
-        guard let resolvedURL = resolveAndValidate(path: path) else {
-            throw FilingError.sandboxViolation(path)
-        }
-
-        do {
-            return try String(contentsOf: resolvedURL, encoding: .utf8)
-        } catch {
-            return "Error: could not read file at '\(path)': \(error.localizedDescription)"
-        }
-    }
-
-    private func executeWriteFile(_ input: JSONValue) async throws -> String {
-        guard case .object(let obj) = input,
-              case .string(let path) = obj["path"],
-              case .string(let content) = obj["content"] else {
-            return "Error: missing required parameters 'path' and/or 'content'"
-        }
-
-        guard let resolvedURL = resolveAndValidate(path: path) else {
-            throw FilingError.sandboxViolation(path)
-        }
-
-        if FileManager.default.fileExists(atPath: resolvedURL.path) {
-            return "Error: file exists, use append_to_file"
-        }
-
-        // Create intermediate directories
-        let dir = resolvedURL.deletingLastPathComponent()
-        do {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        } catch {
-            return "Error: could not create directories for '\(path)': \(error.localizedDescription)"
-        }
-
-        do {
-            try content.write(to: resolvedURL, atomically: true, encoding: .utf8)
-            // Reindex the new file so future searches can find it
-            await vaultIndex.reindex(file: resolvedURL)
-            return "OK: file written to '\(path)'"
-        } catch {
-            return "Error: could not write file at '\(path)': \(error.localizedDescription)"
-        }
-    }
-
-    private func executeAppendToFile(_ input: JSONValue) throws -> String {
-        guard case .object(let obj) = input,
-              case .string(let path) = obj["path"],
-              case .string(let content) = obj["content"] else {
-            return "Error: missing required parameters 'path' and/or 'content'"
-        }
-
-        guard let resolvedURL = resolveAndValidate(path: path) else {
-            throw FilingError.sandboxViolation(path)
-        }
-
-        // Create intermediate directories if needed
-        let dir = resolvedURL.deletingLastPathComponent()
-        do {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        } catch {
-            return "Error: could not create directories for '\(path)': \(error.localizedDescription)"
-        }
-
-        if FileManager.default.fileExists(atPath: resolvedURL.path) {
-            // Append to existing file
-            do {
-                let existing = try String(contentsOf: resolvedURL, encoding: .utf8)
-                let newContent = existing + content
-                try newContent.write(to: resolvedURL, atomically: true, encoding: .utf8)
-                return "OK: content appended to '\(path)'"
-            } catch {
-                return "Error: could not append to file at '\(path)': \(error.localizedDescription)"
+        return withVaultAccess { vaultURL in
+            guard let resolvedURL = resolveAndValidate(path: path, vaultURL: vaultURL) else {
+                return "Error: path outside vault"
             }
-        } else {
-            // Create new file with content
+            do {
+                return try String(contentsOf: resolvedURL, encoding: .utf8)
+            } catch {
+                return "Error: could not read file at '\(path)': \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func executeWriteFile(_ input: JSONValue) async -> String {
+        guard case .object(let obj) = input,
+              case .string(let path) = obj["path"],
+              case .string(let content) = obj["content"] else {
+            return "Error: missing required parameters 'path' and/or 'content'"
+        }
+
+        return await withVaultAccessAsync { vaultURL in
+            guard let resolvedURL = resolveAndValidate(path: path, vaultURL: vaultURL) else {
+                return "Error: path outside vault"
+            }
+
+            if FileManager.default.fileExists(atPath: resolvedURL.path) {
+                return "Error: file exists, use append_to_file"
+            }
+
+            // Create intermediate directories
+            let dir = resolvedURL.deletingLastPathComponent()
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            } catch {
+                return "Error: could not create directories for '\(path)': \(error.localizedDescription)"
+            }
+
             do {
                 try content.write(to: resolvedURL, atomically: true, encoding: .utf8)
-                return "OK: file created with content at '\(path)'"
+                // Reindex the new file so future searches can find it
+                await vaultIndex.reindex(file: resolvedURL)
+                return "OK: file written to '\(path)'"
             } catch {
-                return "Error: could not create file at '\(path)': \(error.localizedDescription)"
+                return "Error: could not write file at '\(path)': \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func executeAppendToFile(_ input: JSONValue) -> String {
+        guard case .object(let obj) = input,
+              case .string(let path) = obj["path"],
+              case .string(let content) = obj["content"] else {
+            return "Error: missing required parameters 'path' and/or 'content'"
+        }
+
+        return withVaultAccess { vaultURL in
+            guard let resolvedURL = resolveAndValidate(path: path, vaultURL: vaultURL) else {
+                return "Error: path outside vault"
+            }
+
+            // Create intermediate directories if needed
+            let dir = resolvedURL.deletingLastPathComponent()
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            } catch {
+                return "Error: could not create directories for '\(path)': \(error.localizedDescription)"
+            }
+
+            if FileManager.default.fileExists(atPath: resolvedURL.path) {
+                // Append to existing file
+                do {
+                    let existing = try String(contentsOf: resolvedURL, encoding: .utf8)
+                    let newContent = existing + content
+                    try newContent.write(to: resolvedURL, atomically: true, encoding: .utf8)
+                    return "OK: content appended to '\(path)'"
+                } catch {
+                    return "Error: could not append to file at '\(path)': \(error.localizedDescription)"
+                }
+            } else {
+                // Create new file with content
+                do {
+                    try content.write(to: resolvedURL, atomically: true, encoding: .utf8)
+                    return "OK: file created with content at '\(path)'"
+                } catch {
+                    return "Error: could not create file at '\(path)': \(error.localizedDescription)"
+                }
             }
         }
     }
@@ -263,31 +268,33 @@ public struct VaultTools: Sendable {
             return "Error: row format invalid — must match | [[link]] | description | tags |"
         }
 
-        let ideasURL = vaultPath.appendingPathComponent("IDEAS.md")
-        let fm = FileManager.default
+        return withVaultAccess { vaultURL in
+            let ideasURL = vaultURL.appendingPathComponent("IDEAS.md")
+            let fm = FileManager.default
 
-        if !fm.fileExists(atPath: ideasURL.path) {
-            // Create IDEAS.md with header
-            let header = """
-            # Ideas Index
+            if !fm.fileExists(atPath: ideasURL.path) {
+                // Create IDEAS.md with header
+                let header = """
+                # Ideas Index
 
-            | File | Description | Tags |
-            |------|-------------|------|
-            """
-            do {
-                try header.write(to: ideasURL, atomically: true, encoding: .utf8)
-            } catch {
-                return "Error: could not create IDEAS.md: \(error.localizedDescription)"
+                | File | Description | Tags |
+                |------|-------------|------|
+                """
+                do {
+                    try header.write(to: ideasURL, atomically: true, encoding: .utf8)
+                } catch {
+                    return "Error: could not create IDEAS.md: \(error.localizedDescription)"
+                }
             }
-        }
 
-        do {
-            let existing = try String(contentsOf: ideasURL, encoding: .utf8)
-            let newContent = existing + "\n" + trimmed
-            try newContent.write(to: ideasURL, atomically: true, encoding: .utf8)
-            return "OK: index row added to IDEAS.md"
-        } catch {
-            return "Error: could not update IDEAS.md: \(error.localizedDescription)"
+            do {
+                let existing = try String(contentsOf: ideasURL, encoding: .utf8)
+                let newContent = existing + "\n" + trimmed
+                try newContent.write(to: ideasURL, atomically: true, encoding: .utf8)
+                return "OK: index row added to IDEAS.md"
+            } catch {
+                return "Error: could not update IDEAS.md: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -299,18 +306,42 @@ public struct VaultTools: Sendable {
         return summary
     }
 
+    // MARK: - Security-scope helpers
+
+    /// Run synchronous vault I/O inside a security-scoped resource session.
+    private func withVaultAccess(_ work: (URL) throws -> String) -> String {
+        do {
+            return try VaultPathManager.withVaultAccess(work)
+        } catch VaultAccessError.accessDenied {
+            return "Error: access denied to vault (security-scoped resource)"
+        } catch {
+            return "Error: vault access failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Async variant of `withVaultAccess(_:)`.
+    private func withVaultAccessAsync(_ work: (URL) async throws -> String) async -> String {
+        do {
+            return try await VaultPathManager.withVaultAccess(work)
+        } catch VaultAccessError.accessDenied {
+            return "Error: access denied to vault (security-scoped resource)"
+        } catch {
+            return "Error: vault access failed: \(error.localizedDescription)"
+        }
+    }
+
     // MARK: - Sandbox helpers
 
     /// Resolve `path` (relative or absolute) to an absolute URL and verify it
-    /// is within the vault. Returns nil if the path is outside the vault.
-    private func resolveAndValidate(path: String) -> URL? {
+    /// is within the given vault URL. Returns nil if the path is outside the vault.
+    private func resolveAndValidate(path: String, vaultURL: URL) -> URL? {
         let url: URL
         if path.hasPrefix("/") {
             url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         } else {
-            url = vaultPath.appendingPathComponent(path).resolvingSymlinksInPath()
+            url = vaultURL.appendingPathComponent(path).resolvingSymlinksInPath()
         }
-        let vaultResolved = vaultPath.resolvingSymlinksInPath()
+        let vaultResolved = vaultURL.resolvingSymlinksInPath()
         // Ensure the resolved path has the vault path as a prefix
         guard url.path.hasPrefix(vaultResolved.path + "/") ||
               url.path == vaultResolved.path else {

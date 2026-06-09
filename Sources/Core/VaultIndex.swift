@@ -26,9 +26,29 @@ public actor VaultIndex {
 
     /// Scans the vault for `.md` files, refreshes stale embeddings, and saves the cache.
     public func refresh() async {
-        cache = EmbeddingCache.load(vaultPath: vaultPath)
+        // Acquire the vault URL and start accessing the security-scoped resource.
+        // We manage the lifecycle manually here so that actor-isolated async work
+        // can happen between start and stop without sending `self` across isolation.
+        let vaultURL: URL
+        let needsStop: Bool
+        if let resolved = VaultPathManager.resolvedVaultURL() {
+            guard resolved.startAccessingSecurityScopedResource() else {
+                print("[VaultIndex] refresh: access denied to security-scoped vault resource")
+                return
+            }
+            vaultURL = resolved
+            needsStop = true
+        } else {
+            vaultURL = VaultPathManager.effectiveVaultURL()
+            needsStop = false
+        }
+        defer {
+            if needsStop { vaultURL.stopAccessingSecurityScopedResource() }
+        }
 
-        let mdFiles = findMarkdownFiles(in: vaultPath)
+        cache = EmbeddingCache.load(vaultPath: vaultURL)
+
+        let mdFiles = findMarkdownFiles(in: vaultURL)
         var cacheChanged = false
 
         for fileURL in mdFiles {
@@ -71,7 +91,7 @@ public actor VaultIndex {
         }
 
         if cacheChanged {
-            try? cache.save(vaultPath: vaultPath)
+            try? cache.save(vaultPath: vaultURL)
         }
     }
 
@@ -109,6 +129,24 @@ public actor VaultIndex {
     /// Recomputes and caches the embedding for a single file.
     /// Call this after writing a new or updated file to the vault.
     public func reindex(file: URL) async {
+        // Manage security-scoped access manually (same reason as refresh()).
+        let vaultURL: URL
+        let needsStop: Bool
+        if let resolved = VaultPathManager.resolvedVaultURL() {
+            guard resolved.startAccessingSecurityScopedResource() else {
+                print("[VaultIndex] reindex: access denied to security-scoped vault resource")
+                return
+            }
+            vaultURL = resolved
+            needsStop = true
+        } else {
+            vaultURL = VaultPathManager.effectiveVaultURL()
+            needsStop = false
+        }
+        defer {
+            if needsStop { vaultURL.stopAccessingSecurityScopedResource() }
+        }
+
         let path = file.path
         guard let liveMtime = modificationDateInterval(of: path) else { return }
         guard let content = try? String(contentsOf: file, encoding: .utf8) else { return }
@@ -120,7 +158,7 @@ public actor VaultIndex {
 
         records[path] = FileRecord(mtimeInterval: liveMtime, vector: vector, title: title, snippet: snippet)
         cache.entries[path] = EmbeddingCache.Entry(mtimeInterval: liveMtime, vector: vector)
-        try? cache.save(vaultPath: vaultPath)
+        try? cache.save(vaultPath: vaultURL)
     }
 
     // MARK: - Helpers
