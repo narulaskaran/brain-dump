@@ -29,6 +29,13 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             }
         }
 
+        // Wire icon state transitions from the submission queue
+        Task {
+            await SubmissionQueue.shared.setOnStateChange { [weak self] state in
+                self?.setState(state)
+            }
+        }
+
         setState(.idle)
     }
 
@@ -145,7 +152,11 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     }
 
     @objc private func groomBacklog() {
-        print("[BrainDump] Groom Backlog tapped (stub)")
+        setState(.processing)
+        Task {
+            await SubmissionQueue.shared.runGrooming()
+            // Final state (.done / .error) delivered via onStateChange callback.
+        }
     }
 
     @objc private func openSettings() {
@@ -205,10 +216,12 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
     private func handleSubmit(_ text: String) {
         closePopover()
+        // .processing state is pushed by SubmissionQueue.onStateChange;
+        // set it immediately here too so the icon updates without delay.
         setState(.processing)
-        Task { [weak self] in
+        Task {
             await SubmissionQueue.shared.submit(text)
-            self?.setState(.done)
+            // Final state (.done / .error) is delivered via onStateChange callback.
         }
     }
 

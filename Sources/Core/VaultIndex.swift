@@ -124,6 +124,34 @@ public actor VaultIndex {
         }
     }
 
+    // MARK: - Bulk accessors
+
+    /// Returns all indexed files as FileResult values with a score of 1.0.
+    public func allFiles() -> [FileResult] {
+        records.map { (path, record) in
+            let relativePath = relativize(path: path)
+            return FileResult(
+                path: path,
+                relativePath: relativePath,
+                title: record.title,
+                snippet: record.snippet,
+                score: 1.0
+            )
+        }
+    }
+
+    /// Returns all cached embedding vectors keyed by absolute path.
+    public func allVectors() -> [String: [Double]] {
+        records.reduce(into: [:]) { dict, pair in
+            dict[pair.key] = pair.value.vector
+        }
+    }
+
+    /// Returns the mtime interval for a given absolute path, or nil if not indexed.
+    public func mtimeInterval(for path: String) -> TimeInterval? {
+        records[path]?.mtimeInterval
+    }
+
     // MARK: - Reindex single file
 
     /// Recomputes and caches the embedding for a single file.
