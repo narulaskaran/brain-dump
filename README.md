@@ -75,14 +75,17 @@ You only need to do this once.
 
 ## LLM providers
 
-BrainDump ships with two providers:
+Choose a provider in Settings. Each has a preset base URL and a model picker with common models (or type a custom model ID).
 
-| Provider | Default model | Notes |
-|----------|---------------|-------|
-| **Anthropic** (default) | `claude-opus-4-5` | Best filing quality |
-| **OpenAI-compatible** | configurable | Works with OpenRouter, Ollama, local servers, etc. |
+| Provider | Base URL | Notes |
+|----------|----------|-------|
+| **Anthropic** (default) | `api.anthropic.com` | Best filing quality; uses Claude API |
+| **OpenAI** | `api.openai.com` | GPT-4o and friends |
+| **OpenRouter** | `openrouter.ai/api` | 200+ models with one key |
+| **Ollama** | `localhost:11434` | Fully local inference, no API key needed |
+| **Custom** | any | Any OpenAI-compatible endpoint |
 
-Switch providers in Settings. For OpenAI-compatible endpoints, set the base URL (e.g. `http://localhost:11434/v1` for Ollama) alongside the model name and API key.
+All non-Anthropic providers use the OpenAI `/v1/chat/completions` wire format.
 
 ## License
 

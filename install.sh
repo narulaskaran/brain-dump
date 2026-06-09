@@ -63,6 +63,19 @@ cp "$BINARY" "$MACOS_DIR/BrainDump"
 chmod +x "$MACOS_DIR/BrainDump"
 echo "    Binary installed."
 
+# ── 5a. Generate app icon ─────────────────────────────────────────────────────
+echo "==> Generating app icon..."
+ICONSET_DIR="$(mktemp -d)/BrainDump.iconset"
+if swift "$SCRIPT_DIR/Scripts/make-icon.swift" "$ICONSET_DIR" 2>&1 | grep -q "Iconset written"; then
+    if iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/AppIcon.icns" 2>/dev/null; then
+        echo "    Icon generated."
+    else
+        echo "    WARNING: iconutil failed — app will launch without a custom icon."
+    fi
+else
+    echo "    WARNING: icon script failed — app will launch without a custom icon."
+fi
+
 # ── 6. Write Info.plist ───────────────────────────────────────────────────────
 PLIST_SRC="Sources/macOS/Info.plist"
 if [ -f "$PLIST_SRC" ]; then
