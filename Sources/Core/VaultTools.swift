@@ -204,11 +204,26 @@ public struct VaultTools: Sendable {
                 try content.write(to: resolvedURL, atomically: true, encoding: .utf8)
                 // Reindex the new file so future searches can find it
                 await vaultIndex.reindex(file: resolvedURL)
+
+                // Sync graph colours if this file landed in a group subfolder
+                if isInGroupSubfolder(path: path) {
+                    try? ObsidianGraphConfig.sync(vaultPath: vaultURL)
+                }
+
                 return "OK: file written to '\(path)'"
             } catch {
                 return "Error: could not write file at '\(path)': \(error.localizedDescription)"
             }
         }
+    }
+
+    /// Returns true when `path` is at least 3 components deep and its top-level
+    /// folder is one of the PARA root folders (e.g. "10 Projects/group/file.md").
+    private func isInGroupSubfolder(path: String) -> Bool {
+        let paraFolders = ["10 Projects", "20 Areas", "30 Resources", "00 Inbox"]
+        let parts = path.components(separatedBy: "/")
+        guard parts.count >= 3 else { return false }
+        return paraFolders.contains(parts[0])
     }
 
     private func executeAppendToFile(_ input: JSONValue) throws -> String {

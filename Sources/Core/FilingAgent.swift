@@ -28,8 +28,9 @@ public actor FilingAgent {
     /// - Parameters:
     ///   - rawInput: The unprocessed idea text from the user.
     ///   - candidates: Top-3 semantically similar existing files (from VaultIndex).
-    /// - Returns: The one-line summary from `done()`, or throws on failure.
-    public func file(rawInput: String, candidates: [FileResult]) async throws -> String {
+    /// - Returns: A tuple of the one-line summary from `done()` and the relative path
+    ///   of the last file written during this filing run (nil if no new file was created).
+    public func file(rawInput: String, candidates: [FileResult]) async throws -> (summary: String, lastWrittenPath: String?) {
         let systemPrompt = buildSystemPrompt()
         let userMessage = buildUserMessage(rawInput: rawInput, candidates: candidates)
 
@@ -39,6 +40,7 @@ public actor FilingAgent {
         ]
 
         let tools = vaultTools.toolDefinitions
+        var lastWrittenPath: String?
 
         for _ in 0..<Self.maxIterations {
             let response: LLMResponse
@@ -52,7 +54,7 @@ public actor FilingAgent {
             case .text(let text):
                 // LLM returned plain text — treat as implicit completion
                 messages.append(Message(role: .assistant, content: text))
-                return text
+                return (summary: text, lastWrittenPath: lastWrittenPath)
 
             case .toolCalls(let calls):
                 // Append the assistant's tool-call turn
@@ -72,6 +74,14 @@ public actor FilingAgent {
                     // Append the tool result
                     messages.append(Message(role: .tool, toolResultId: call.id, result: result))
 
+                    // Track the path of any successfully written file
+                    if call.name == "write_file",
+                       result.hasPrefix("OK: file written to '"),
+                       case .object(let obj) = call.input,
+                       case .string(let path) = obj["path"] {
+                        lastWrittenPath = path
+                    }
+
                     if call.name == "done" {
                         doneResult = result
                     }
@@ -79,7 +89,7 @@ public actor FilingAgent {
 
                 // If any call was `done`, end the loop
                 if let summary = doneResult {
-                    return summary
+                    return (summary: summary, lastWrittenPath: lastWrittenPath)
                 }
             }
         }

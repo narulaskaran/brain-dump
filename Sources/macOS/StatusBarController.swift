@@ -13,6 +13,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     private var hotkeyManager: HotkeyManager?
     private var currentState: MenuBarIconState = .idle
     private var settingsWindowController: SettingsWindowController?
+    private var lastFiledPath: String?
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -33,6 +34,13 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         Task {
             await SubmissionQueue.shared.setOnStateChange { [weak self] state in
                 self?.setState(state)
+                // Refresh the cached last-filed path when a submission completes
+                if case .done = state {
+                    Task { @MainActor [weak self] in
+                        let path = await SubmissionQueue.shared.lastFiledPath
+                        self?.lastFiledPath = path
+                    }
+                }
             }
         }
 
@@ -113,8 +121,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
         menu.addItem(.separator())
 
-        let lastFiledItem = NSMenuItem(title: "Last Filed: —", action: nil, keyEquivalent: "")
-        lastFiledItem.isEnabled = false
+        let lastFiledItem = buildLastFiledMenuItem()
         menu.addItem(lastFiledItem)
 
         // Show error message in menu if in error state
@@ -143,6 +150,44 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         menu.addItem(quitItem)
 
         return menu
+    }
+
+    // MARK: - Last Filed Menu Item
+
+    private func buildLastFiledMenuItem() -> NSMenuItem {
+        if let relativePath = lastFiledPath {
+            let filename = URL(fileURLWithPath: relativePath).deletingPathExtension().lastPathComponent
+            let item = NSMenuItem(
+                title: "Last Filed: \(filename)",
+                action: #selector(openLastFiled),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = relativePath
+            return item
+        } else {
+            let item = NSMenuItem(title: "Last Filed: —", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            return item
+        }
+    }
+
+    @objc private func openLastFiled(_ sender: NSMenuItem) {
+        guard let relativePath = sender.representedObject as? String else { return }
+        let vaultURL = VaultPathManager.effectiveVaultURL()
+        let vaultName = vaultURL.lastPathComponent
+
+        // URL-encode the relative path for the obsidian:// URI
+        guard let encodedPath = relativePath
+            .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return }
+
+        // Also encode the vault name
+        guard let encodedVault = vaultName
+            .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return }
+
+        let uriString = "obsidian://open?vault=\(encodedVault)&file=\(encodedPath)"
+        guard let uri = URL(string: uriString) else { return }
+        NSWorkspace.shared.open(uri)
     }
 
     // MARK: - Menu Actions

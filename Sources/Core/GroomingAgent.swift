@@ -95,6 +95,8 @@ public actor GroomingAgent {
             let groomingURL = resolvedURL.appendingPathComponent("GROOMING.md")
             try groomingContent.write(to: groomingURL, atomically: true, encoding: .utf8)
             try state.save(vaultPath: resolvedURL)
+            // Sync Obsidian graph colour groups after each grooming pass
+            try? ObsidianGraphConfig.sync(vaultPath: resolvedURL)
         }
 
         return findingCount

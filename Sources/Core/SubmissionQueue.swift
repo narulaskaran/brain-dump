@@ -13,6 +13,9 @@ public actor SubmissionQueue {
     /// Wire this in StatusBarController to drive icon transitions.
     public var onStateChange: (@MainActor @Sendable (MenuBarIconState) -> Void)?
 
+    /// The relative vault path of the most recently filed note, or nil if nothing has been filed yet.
+    public private(set) var lastFiledPath: String?
+
     private init() {}
 
     /// Configure the queue with the agents and VaultIndex.
@@ -45,7 +48,10 @@ public actor SubmissionQueue {
             // Refresh index to pick up any recent vault changes, then search candidates
             await index.refresh()
             let candidates = await index.searchSimilar(query: trimmed, topK: 3)
-            let summary = try await agent.file(rawInput: trimmed, candidates: candidates)
+            let (summary, writtenPath) = try await agent.file(rawInput: trimmed, candidates: candidates)
+            if let path = writtenPath {
+                lastFiledPath = path
+            }
             print("[BrainDump] Filed: \(summary)")
 
             // Auto-groom if enabled
