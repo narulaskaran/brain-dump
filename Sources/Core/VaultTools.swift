@@ -117,11 +117,11 @@ public struct VaultTools: Sendable {
         case "search_similar":
             return await executeSearchSimilar(call.input)
         case "read_file":
-            return executeReadFile(call.input)
+            return try executeReadFile(call.input)
         case "write_file":
-            return await executeWriteFile(call.input)
+            return try await executeWriteFile(call.input)
         case "append_to_file":
-            return executeAppendToFile(call.input)
+            return try executeAppendToFile(call.input)
         case "update_index":
             return executeUpdateIndex(call.input)
         case "done":
@@ -158,14 +158,14 @@ public struct VaultTools: Sendable {
         return "[\(items.joined(separator: ","))]"
     }
 
-    private func executeReadFile(_ input: JSONValue) -> String {
+    private func executeReadFile(_ input: JSONValue) throws -> String {
         guard case .object(let obj) = input,
               case .string(let path) = obj["path"] else {
             return "Error: missing required parameter 'path'"
         }
 
         guard let resolvedURL = resolveAndValidate(path: path) else {
-            return "Error: path outside vault"
+            throw FilingError.sandboxViolation(path)
         }
 
         do {
@@ -175,7 +175,7 @@ public struct VaultTools: Sendable {
         }
     }
 
-    private func executeWriteFile(_ input: JSONValue) async -> String {
+    private func executeWriteFile(_ input: JSONValue) async throws -> String {
         guard case .object(let obj) = input,
               case .string(let path) = obj["path"],
               case .string(let content) = obj["content"] else {
@@ -183,7 +183,7 @@ public struct VaultTools: Sendable {
         }
 
         guard let resolvedURL = resolveAndValidate(path: path) else {
-            return "Error: path outside vault"
+            throw FilingError.sandboxViolation(path)
         }
 
         if FileManager.default.fileExists(atPath: resolvedURL.path) {
@@ -208,7 +208,7 @@ public struct VaultTools: Sendable {
         }
     }
 
-    private func executeAppendToFile(_ input: JSONValue) -> String {
+    private func executeAppendToFile(_ input: JSONValue) throws -> String {
         guard case .object(let obj) = input,
               case .string(let path) = obj["path"],
               case .string(let content) = obj["content"] else {
@@ -216,7 +216,7 @@ public struct VaultTools: Sendable {
         }
 
         guard let resolvedURL = resolveAndValidate(path: path) else {
-            return "Error: path outside vault"
+            throw FilingError.sandboxViolation(path)
         }
 
         // Create intermediate directories if needed
@@ -306,14 +306,14 @@ public struct VaultTools: Sendable {
     private func resolveAndValidate(path: String) -> URL? {
         let url: URL
         if path.hasPrefix("/") {
-            url = URL(fileURLWithPath: path).standardized
+            url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         } else {
-            url = vaultPath.appendingPathComponent(path).standardized
+            url = vaultPath.appendingPathComponent(path).resolvingSymlinksInPath()
         }
-        let vaultStandardized = vaultPath.standardized
+        let vaultResolved = vaultPath.resolvingSymlinksInPath()
         // Ensure the resolved path has the vault path as a prefix
-        guard url.path.hasPrefix(vaultStandardized.path + "/") ||
-              url.path == vaultStandardized.path else {
+        guard url.path.hasPrefix(vaultResolved.path + "/") ||
+              url.path == vaultResolved.path else {
             return nil
         }
         return url

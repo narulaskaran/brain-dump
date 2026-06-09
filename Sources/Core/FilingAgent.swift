@@ -62,7 +62,12 @@ public actor FilingAgent {
 
                 // Execute each tool call and collect results
                 for call in calls {
-                    let result = try await vaultTools.execute(call)
+                    let result: String
+                    do {
+                        result = try await vaultTools.execute(call)
+                    } catch let violation as FilingError {
+                        throw violation
+                    }
 
                     // Append the tool result
                     messages.append(Message(role: .tool, toolResultId: call.id, result: result))
