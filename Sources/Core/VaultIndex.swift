@@ -9,7 +9,7 @@ public actor VaultIndex {
 
     // In-memory map from absolute path -> (mtime, vector, content snippet, title)
     private struct FileRecord {
-        var mtime: Date
+        var mtimeInterval: TimeInterval
         var vector: [Double]
         var title: String
         var snippet: String
@@ -33,31 +33,31 @@ public actor VaultIndex {
 
         for fileURL in mdFiles {
             let path = fileURL.path
-            guard let mtime = modificationDate(of: path) else { continue }
+            guard let liveMtime = modificationDateInterval(of: path) else { continue }
             guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else { continue }
 
             let snippet = String(content.prefix(500))
             let title = extractTitle(from: content, fileURL: fileURL)
 
-            // Use cached vector if mtime matches
-            if let entry = cache.entries[path], entry.mtime == mtime {
+            // Use cached vector if mtime matches within 1-second tolerance
+            if let entry = cache.entries[path], abs(entry.mtimeInterval - liveMtime) < 1.0 {
                 records[path] = FileRecord(
-                    mtime: mtime,
+                    mtimeInterval: liveMtime,
                     vector: entry.vector,
                     title: title,
                     snippet: snippet
                 )
             } else {
-                // Recompute embedding
-                let inputText = title + " " + snippet
+                // Recompute embedding: title + up to 500 chars of content
+                let inputText = title + " " + String(content.prefix(500))
                 let vector = await engine.embed(inputText)
                 records[path] = FileRecord(
-                    mtime: mtime,
+                    mtimeInterval: liveMtime,
                     vector: vector,
                     title: title,
                     snippet: snippet
                 )
-                cache.entries[path] = EmbeddingCache.Entry(mtime: mtime, vector: vector)
+                cache.entries[path] = EmbeddingCache.Entry(mtimeInterval: liveMtime, vector: vector)
                 cacheChanged = true
             }
         }
@@ -110,16 +110,16 @@ public actor VaultIndex {
     /// Call this after writing a new or updated file to the vault.
     public func reindex(file: URL) async {
         let path = file.path
-        guard let mtime = modificationDate(of: path) else { return }
+        guard let liveMtime = modificationDateInterval(of: path) else { return }
         guard let content = try? String(contentsOf: file, encoding: .utf8) else { return }
 
         let snippet = String(content.prefix(500))
         let title = extractTitle(from: content, fileURL: file)
-        let inputText = title + " " + snippet
+        let inputText = title + " " + String(content.prefix(500))
         let vector = await engine.embed(inputText)
 
-        records[path] = FileRecord(mtime: mtime, vector: vector, title: title, snippet: snippet)
-        cache.entries[path] = EmbeddingCache.Entry(mtime: mtime, vector: vector)
+        records[path] = FileRecord(mtimeInterval: liveMtime, vector: vector, title: title, snippet: snippet)
+        cache.entries[path] = EmbeddingCache.Entry(mtimeInterval: liveMtime, vector: vector)
         try? cache.save(vaultPath: vaultPath)
     }
 
@@ -149,10 +149,11 @@ public actor VaultIndex {
         return results
     }
 
-    /// Returns the modification date of a file, or nil if unavailable.
-    private func modificationDate(of path: String) -> Date? {
+    /// Returns the modification date of a file as a TimeInterval (seconds since
+    /// reference date), preserving sub-second precision. Returns nil if unavailable.
+    private func modificationDateInterval(of path: String) -> TimeInterval? {
         let attrs = try? FileManager.default.attributesOfItem(atPath: path)
-        return attrs?[.modificationDate] as? Date
+        return (attrs?[.modificationDate] as? Date)?.timeIntervalSinceReferenceDate
     }
 
     /// Extracts the first ATX H1 heading (`# Heading`) or derives a title from the filename.

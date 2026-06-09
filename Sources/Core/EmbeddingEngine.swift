@@ -11,13 +11,13 @@ public actor EmbeddingEngine {
     }
 
     /// Returns an embedding vector for the given text.
-    /// Uses the first 500 characters to keep costs low.
     /// Falls back to an empty vector if NLEmbedding is unavailable.
+    /// NLEmbedding handles long inputs internally; callers are responsible for
+    /// passing appropriately scoped text.
     public func embed(_ text: String) -> [Double] {
         guard let embedding else { return [] }
-        let truncated = String(text.prefix(500))
-        guard !truncated.isEmpty else { return [] }
-        guard let vector = embedding.vector(for: truncated) else { return [] }
+        guard !text.isEmpty else { return [] }
+        guard let vector = embedding.vector(for: text) else { return [] }
         return vector.map { Double($0) }
     }
 

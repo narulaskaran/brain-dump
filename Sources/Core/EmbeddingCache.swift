@@ -5,13 +5,14 @@ public struct EmbeddingCache: Codable, Sendable {
 
     /// A single cached embedding entry.
     public struct Entry: Codable, Sendable {
-        /// Last modification date of the source file at the time of embedding.
-        public var mtime: Date
+        /// Last modification date of the source file at the time of embedding,
+        /// stored as seconds since the reference date to preserve sub-second precision.
+        public var mtimeInterval: TimeInterval
         /// The embedding vector.
         public var vector: [Double]
 
-        public init(mtime: Date, vector: [Double]) {
-            self.mtime = mtime
+        public init(mtimeInterval: TimeInterval, vector: [Double]) {
+            self.mtimeInterval = mtimeInterval
             self.vector = vector
         }
     }
@@ -35,7 +36,6 @@ public struct EmbeddingCache: Codable, Sendable {
         let url = EmbeddingCache.cacheURL(vaultPath: vaultPath)
         guard let data = try? Data(contentsOf: url) else { return EmbeddingCache() }
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
         return (try? decoder.decode(EmbeddingCache.self, from: data)) ?? EmbeddingCache()
     }
 
@@ -43,7 +43,6 @@ public struct EmbeddingCache: Codable, Sendable {
     public mutating func save(vaultPath: URL) throws {
         let url = EmbeddingCache.cacheURL(vaultPath: vaultPath)
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(self)
         try data.write(to: url, options: .atomic)
