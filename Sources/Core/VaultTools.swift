@@ -117,11 +117,11 @@ public struct VaultTools: Sendable {
         case "search_similar":
             return await executeSearchSimilar(call.input)
         case "read_file":
-            return executeReadFile(call.input)
+            return try executeReadFile(call.input)
         case "write_file":
-            return await executeWriteFile(call.input)
+            return try await executeWriteFile(call.input)
         case "append_to_file":
-            return executeAppendToFile(call.input)
+            return try executeAppendToFile(call.input)
         case "update_index":
             return executeUpdateIndex(call.input)
         case "done":
@@ -158,15 +158,15 @@ public struct VaultTools: Sendable {
         return "[\(items.joined(separator: ","))]"
     }
 
-    private func executeReadFile(_ input: JSONValue) -> String {
+    private func executeReadFile(_ input: JSONValue) throws -> String {
         guard case .object(let obj) = input,
               case .string(let path) = obj["path"] else {
             return "Error: missing required parameter 'path'"
         }
 
-        return withVaultAccess { vaultURL in
+        return try withVaultAccessThrows { vaultURL in
             guard let resolvedURL = resolveAndValidate(path: path, vaultURL: vaultURL) else {
-                return "Error: path outside vault"
+                throw FilingError.sandboxViolation(path)
             }
             do {
                 return try String(contentsOf: resolvedURL, encoding: .utf8)
@@ -176,16 +176,16 @@ public struct VaultTools: Sendable {
         }
     }
 
-    private func executeWriteFile(_ input: JSONValue) async -> String {
+    private func executeWriteFile(_ input: JSONValue) async throws -> String {
         guard case .object(let obj) = input,
               case .string(let path) = obj["path"],
               case .string(let content) = obj["content"] else {
             return "Error: missing required parameters 'path' and/or 'content'"
         }
 
-        return await withVaultAccessAsync { vaultURL in
+        return try await withVaultAccessAsyncThrows { vaultURL in
             guard let resolvedURL = resolveAndValidate(path: path, vaultURL: vaultURL) else {
-                return "Error: path outside vault"
+                throw FilingError.sandboxViolation(path)
             }
 
             if FileManager.default.fileExists(atPath: resolvedURL.path) {
@@ -211,16 +211,16 @@ public struct VaultTools: Sendable {
         }
     }
 
-    private func executeAppendToFile(_ input: JSONValue) -> String {
+    private func executeAppendToFile(_ input: JSONValue) throws -> String {
         guard case .object(let obj) = input,
               case .string(let path) = obj["path"],
               case .string(let content) = obj["content"] else {
             return "Error: missing required parameters 'path' and/or 'content'"
         }
 
-        return withVaultAccess { vaultURL in
+        return try withVaultAccessThrows { vaultURL in
             guard let resolvedURL = resolveAndValidate(path: path, vaultURL: vaultURL) else {
-                return "Error: path outside vault"
+                throw FilingError.sandboxViolation(path)
             }
 
             // Create intermediate directories if needed
@@ -319,10 +319,36 @@ public struct VaultTools: Sendable {
         }
     }
 
+    /// Throwing variant of `withVaultAccess(_:)` that propagates errors.
+    private func withVaultAccessThrows(_ work: (URL) throws -> String) throws -> String {
+        do {
+            return try VaultPathManager.withVaultAccess(work)
+        } catch let error as FilingError {
+            throw error
+        } catch VaultAccessError.accessDenied {
+            return "Error: access denied to vault (security-scoped resource)"
+        } catch {
+            return "Error: vault access failed: \(error.localizedDescription)"
+        }
+    }
+
     /// Async variant of `withVaultAccess(_:)`.
     private func withVaultAccessAsync(_ work: (URL) async throws -> String) async -> String {
         do {
             return try await VaultPathManager.withVaultAccess(work)
+        } catch VaultAccessError.accessDenied {
+            return "Error: access denied to vault (security-scoped resource)"
+        } catch {
+            return "Error: vault access failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Throwing async variant of `withVaultAccessAsync(_:)` that propagates errors.
+    private func withVaultAccessAsyncThrows(_ work: (URL) async throws -> String) async throws -> String {
+        do {
+            return try await VaultPathManager.withVaultAccess(work)
+        } catch let error as FilingError {
+            throw error
         } catch VaultAccessError.accessDenied {
             return "Error: access denied to vault (security-scoped resource)"
         } catch {
