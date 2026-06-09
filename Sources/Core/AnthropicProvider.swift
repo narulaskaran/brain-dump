@@ -21,40 +21,34 @@ public struct AnthropicProvider: LLMProvider {
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        // Separate system message (Anthropic uses a top-level "system" field)
-        var systemPrompt: String? = nil
-        var conversationMessages: [[String: Any]] = []
+        // Separate system messages (Anthropic uses a top-level "system" field).
+        // Join multiple system messages with a blank line.
+        var systemParts: [String] = []
+        var conversationMessages: [AnthropicMessage] = []
 
         for message in messages {
             if message.role == .system {
-                systemPrompt = message.content
+                systemParts.append(message.content)
             } else {
-                conversationMessages.append([
-                    "role": message.role.rawValue,
-                    "content": message.content
-                ])
+                conversationMessages.append(AnthropicMessage(role: message.role.rawValue, content: message.content))
             }
         }
 
-        var body: [String: Any] = [
-            "model": model,
-            "max_tokens": maxTokens,
-            "messages": conversationMessages
-        ]
-        if let system = systemPrompt {
-            body["system"] = system
-        }
-        if !tools.isEmpty {
-            body["tools"] = tools.map { tool -> [String: Any] in
-                [
-                    "name": tool.name,
-                    "description": tool.description,
-                    "input_schema": tool.inputSchema.toAny()
-                ]
-            }
+        let systemPrompt: String? = systemParts.isEmpty ? nil : systemParts.joined(separator: "\n\n")
+
+        let toolPayloads: [AnthropicTool] = tools.map { tool in
+            AnthropicTool(name: tool.name, description: tool.description, inputSchema: tool.inputSchema)
         }
 
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let body = AnthropicRequestBody(
+            model: model,
+            maxTokens: maxTokens,
+            system: systemPrompt,
+            messages: conversationMessages,
+            tools: toolPayloads.isEmpty ? nil : toolPayloads
+        )
+
+        request.httpBody = try JSONEncoder().encode(body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -72,33 +66,23 @@ public struct AnthropicProvider: LLMProvider {
     // MARK: - Response parsing
 
     private func parseResponse(data: Data) throws -> LLMResponse {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let contentBlocks = json["content"] as? [[String: Any]]
-        else {
-            let raw = String(data: data, encoding: .utf8) ?? ""
-            throw LLMError.decodingError("Unexpected response shape: \(raw)")
+        let decoded: AnthropicResponseBody
+        do {
+            decoded = try JSONDecoder().decode(AnthropicResponseBody.self, from: data)
+        } catch {
+            throw LLMError.decodingError(error.localizedDescription)
         }
 
-        // Check for tool_use blocks first
         var toolCalls: [ToolCall] = []
         var textParts: [String] = []
 
-        for block in contentBlocks {
-            guard let type = block["type"] as? String else { continue }
-            switch type {
-            case "tool_use":
-                guard
-                    let id = block["id"] as? String,
-                    let name = block["name"] as? String
-                else { continue }
-                let inputAny = block["input"] ?? [String: Any]()
-                let input = JSONValue.from(inputAny)
-                toolCalls.append(ToolCall(id: id, name: name, input: input))
-            case "text":
-                if let text = block["text"] as? String {
-                    textParts.append(text)
-                }
-            default:
+        for block in decoded.content {
+            switch block {
+            case .toolUse(let toolUse):
+                toolCalls.append(ToolCall(id: toolUse.id, name: toolUse.name, input: toolUse.input))
+            case .text(let textBlock):
+                textParts.append(textBlock.text)
+            case .unknown:
                 break
             }
         }
@@ -111,4 +95,84 @@ public struct AnthropicProvider: LLMProvider {
         }
         throw LLMError.noContent
     }
+}
+
+// MARK: - Private request types
+
+private struct AnthropicRequestBody: Encodable {
+    let model: String
+    let maxTokens: Int
+    let system: String?
+    let messages: [AnthropicMessage]
+    let tools: [AnthropicTool]?
+
+    enum CodingKeys: String, CodingKey {
+        case model
+        case maxTokens = "max_tokens"
+        case system
+        case messages
+        case tools
+    }
+}
+
+private struct AnthropicMessage: Encodable {
+    let role: String
+    let content: String
+}
+
+private struct AnthropicTool: Encodable {
+    let name: String
+    let description: String
+    /// Raw JSON schema — encoded as-is by forwarding to JSONValue's own encoder.
+    let inputSchema: JSONValue
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case description
+        case inputSchema = "input_schema"
+    }
+}
+
+// MARK: - Private response types
+
+private struct AnthropicResponseBody: Decodable {
+    let content: [ContentBlock]
+}
+
+private enum ContentBlock: Decodable {
+    case text(TextBlock)
+    case toolUse(ToolUseBlock)
+    case unknown
+
+    private enum TypeKey: String, Decodable {
+        case text
+        case toolUse = "tool_use"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type_ = try container.decode(String.self, forKey: .type)
+        switch type_ {
+        case "text":
+            self = .text(try TextBlock(from: decoder))
+        case "tool_use":
+            self = .toolUse(try ToolUseBlock(from: decoder))
+        default:
+            self = .unknown
+        }
+    }
+}
+
+private struct TextBlock: Decodable {
+    let text: String
+}
+
+private struct ToolUseBlock: Decodable {
+    let id: String
+    let name: String
+    let input: JSONValue
 }
