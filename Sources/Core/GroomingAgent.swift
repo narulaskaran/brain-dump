@@ -51,7 +51,9 @@ public actor GroomingAgent {
         guard !allFiles.isEmpty else {
             // Nothing to groom — write an empty GROOMING.md and state
             let state = GroomingState(reviewed: false, generatedAt: Date(), count: 0)
-            try state.save(vaultPath: vaultPath)
+            try VaultPathManager.withVaultAccess { resolvedURL in
+                try state.save(vaultPath: resolvedURL)
+            }
             return 0
         }
 
@@ -78,7 +80,7 @@ public actor GroomingAgent {
             .filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("- ") }
             .count
 
-        // 7. Write GROOMING.md
+        // 7. Write GROOMING.md and 8. Save .grooming-state.json inside security-scoped access
         let iso8601 = ISO8601DateFormatter().string(from: Date())
         let header = """
         # Grooming — \(iso8601)
@@ -87,12 +89,13 @@ public actor GroomingAgent {
 
         """
         let groomingContent = header + chunkOutputs.joined(separator: "\n\n")
-        let groomingURL = vaultPath.appendingPathComponent("GROOMING.md")
-        try groomingContent.write(to: groomingURL, atomically: true, encoding: .utf8)
-
-        // 8. Save .grooming-state.json
         let state = GroomingState(reviewed: false, generatedAt: Date(), count: findingCount)
-        try state.save(vaultPath: vaultPath)
+
+        try VaultPathManager.withVaultAccess { resolvedURL in
+            let groomingURL = resolvedURL.appendingPathComponent("GROOMING.md")
+            try groomingContent.write(to: groomingURL, atomically: true, encoding: .utf8)
+            try state.save(vaultPath: resolvedURL)
+        }
 
         return findingCount
     }
