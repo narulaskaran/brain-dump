@@ -11,7 +11,10 @@ struct SettingsView: View {
     @State private var selectedProvider: ProviderConfig.Provider
     @State private var baseURLString: String
     @State private var apiKey: String
-    @State private var model: String
+    /// Either a value from `selectedProvider.commonModels` or the sentinel `"__custom__"`.
+    @State private var modelSelection: String
+    /// Text field value used when modelSelection == "__custom__".
+    @State private var customModel: String
 
     // MARK: Vault
 
@@ -37,12 +40,21 @@ struct SettingsView: View {
         let config = ProviderConfig.load() ?? .defaultAnthropic
         _selectedProvider = State(initialValue: config.provider)
         _baseURLString = State(initialValue: config.baseURL.absoluteString)
-        _model = State(initialValue: config.model)
         _apiKey = State(initialValue: KeychainHelper.load(key: "apiKey") ?? "")
         _autoGroom = State(initialValue: UserDefaults.standard.object(forKey: "autoGroom") as? Bool ?? true)
 
         let vaultURL = VaultPathManager.effectiveVaultURL()
         _vaultPathDisplay = State(initialValue: vaultURL.path)
+
+        // Resolve model → picker selection vs custom text field
+        let storedModel = config.model
+        if config.provider.commonModels.contains(storedModel) {
+            _modelSelection = State(initialValue: storedModel)
+            _customModel = State(initialValue: "")
+        } else {
+            _modelSelection = State(initialValue: "__custom__")
+            _customModel = State(initialValue: storedModel)
+        }
     }
 
     // MARK: Body
@@ -52,18 +64,17 @@ struct SettingsView: View {
             // ---- LLM Provider ----
             Section("LLM Provider") {
                 Picker("Provider", selection: $selectedProvider) {
-                    Text("Anthropic").tag(ProviderConfig.Provider.anthropic)
-                    Text("OpenAI-compatible").tag(ProviderConfig.Provider.openai)
+                    ForEach(ProviderConfig.Provider.allCases, id: \.self) { provider in
+                        Text(provider.displayName).tag(provider)
+                    }
                 }
-                .pickerStyle(.segmented)
-                .onChange(of: selectedProvider) { _, newValue in
-                    applyProviderDefaults(newValue)
+                .onChange(of: selectedProvider) { _, new in
+                    applyProviderDefaults(new)
                 }
 
-                if selectedProvider == .openai {
+                if selectedProvider.showsBaseURLField {
                     TextField("Base URL", text: $baseURLString)
                         .textFieldStyle(.roundedBorder)
-                        .help("e.g. https://api.openai.com")
                 }
 
                 SecureField("API Key", text: $apiKey)
@@ -75,9 +86,7 @@ struct SettingsView: View {
                         .foregroundStyle(.red)
                 }
 
-                TextField("Model", text: $model)
-                    .textFieldStyle(.roundedBorder)
-                    .help(modelPlaceholder)
+                modelPickerView
             }
 
             // ---- Vault ----
@@ -119,20 +128,51 @@ struct SettingsView: View {
         .padding([.horizontal, .bottom])
     }
 
+    // MARK: - Model picker
+
+    @ViewBuilder
+    private var modelPickerView: some View {
+        let models = selectedProvider.commonModels
+        if models.isEmpty {
+            // No known models (custom provider) — plain text field
+            TextField("Model", text: $customModel)
+                .textFieldStyle(.roundedBorder)
+                .help("Enter any model identifier")
+        } else {
+            Picker("Model", selection: $modelSelection) {
+                ForEach(models, id: \.self) { m in
+                    Text(m).tag(m)
+                }
+                Divider()
+                Text("Custom…").tag("__custom__")
+            }
+
+            if modelSelection == "__custom__" {
+                TextField("Custom model ID", text: $customModel)
+                    .textFieldStyle(.roundedBorder)
+                    .help("Enter any model identifier supported by this provider")
+            }
+        }
+    }
+
     // MARK: - Helpers
 
-    private var modelPlaceholder: String {
-        selectedProvider == .anthropic ? "claude-sonnet-4-6" : "gpt-4o"
+    private var effectiveModel: String {
+        if selectedProvider.commonModels.isEmpty {
+            return customModel
+        }
+        return modelSelection == "__custom__" ? customModel : modelSelection
     }
 
     private func applyProviderDefaults(_ provider: ProviderConfig.Provider) {
-        switch provider {
-        case .anthropic:
-            baseURLString = "https://api.anthropic.com"
-            if model.isEmpty || model == "gpt-4o" { model = "claude-sonnet-4-6" }
-        case .openai:
-            baseURLString = "https://api.openai.com"
-            if model.isEmpty || model == "claude-sonnet-4-6" { model = "gpt-4o" }
+        baseURLString = provider.defaultBaseURL.absoluteString
+        let defaultModel = provider.defaultModel
+        if provider.commonModels.contains(defaultModel) {
+            modelSelection = defaultModel
+            customModel = ""
+        } else {
+            modelSelection = "__custom__"
+            customModel = defaultModel
         }
     }
 
@@ -155,7 +195,6 @@ struct SettingsView: View {
     }
 
     private func saveAndDismiss() {
-        // Persist API key to Keychain
         do {
             try KeychainHelper.save(key: "apiKey", value: apiKey)
             keychainError = nil
@@ -164,12 +203,10 @@ struct SettingsView: View {
             return
         }
 
-        // Build and persist ProviderConfig
-        let baseURL = URL(string: baseURLString) ?? URL(string: "https://api.anthropic.com")!
-        let config = ProviderConfig(provider: selectedProvider, baseURL: baseURL, model: model)
+        let baseURL = URL(string: baseURLString) ?? selectedProvider.defaultBaseURL
+        let config = ProviderConfig(provider: selectedProvider, baseURL: baseURL, model: effectiveModel)
         config.save()
 
-        // Persist behaviour settings
         UserDefaults.standard.set(autoGroom, forKey: "autoGroom")
 
         onDone?()
